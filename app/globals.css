@@ -1,0 +1,53 @@
+@import "tailwindcss";
+
+@theme inline {
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --animate-rise: rise 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  --animate-float: float 6s ease-in-out infinite;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+@keyframes float {
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+/* Faint dot texture for hero and app backgrounds. */
+@utility bg-dots {
+  background-image: radial-gradient(rgb(15 23 42 / 0.07) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+
+@utility bg-dots-light {
+  background-image: radial-gradient(rgb(255 255 255 / 0.09) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+
+body {
+  background: #f5f6f8;
+  color: #0b1220;
+  font-feature-settings: "cv11", "ss01";
+}
+
+::selection {
+  background: #a7f3d0;
+  color: #064e3b;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

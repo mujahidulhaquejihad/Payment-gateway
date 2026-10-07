@@ -1,0 +1,221 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum KycStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum Mode {
+  TEST
+  LIVE
+}
+
+enum PaymentStatus {
+  CREATED
+  PENDING
+  SUCCEEDED
+  FAILED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+enum SettlementStatus {
+  PENDING
+  PAID
+}
+
+enum Role {
+  OWNER
+  MANAGER
+  VIEWER
+}
+
+// A login. Each merchant has exactly one OWNER (created at signup); staff are MANAGER or VIEWER.
+model User {
+  id                 String   @id @default(cuid())
+  merchantId         String
+  email              String   @unique
+  name               String
+  passwordHash       String
+  role               Role
+  // Only settable via `npm run create-admin`, never through the web UI.
+  isAdmin            Boolean  @default(false)
+  // Bumped to revoke every existing session (password change, sign out everywhere).
+  tokenVersion       Int      @default(0)
+  mustChangePassword Boolean  @default(false)
+  // AES-256-GCM encrypted TOTP secret; set during setup, active once totpEnabled.
+  totpSecret         String?
+  totpEnabled        Boolean  @default(false)
+  // Last accepted 30s step, so a code cannot be replayed.
+  totpLastStep       Int      @default(0)
+  createdAt          DateTime @default(now())
+  merchant           Merchant @relation(fields: [merchantId], references: [id])
+
+  @@index([merchantId])
+}
+
+model Merchant {
+  id            String    @id @default(cuid())
+  // Business contact email (the owner's login email at signup).
+  email         String    @unique
+  businessName  String
+  ownerName     String
+  phone         String
+  kycStatus     KycStatus @default(PENDING)
+  payoutMethod  String? // bank | bkash | nagad
+  payoutAccount String?
+  // Fee plan in basis points (185 = 1.85%)
+  mfsBps        Int       @default(185)
+  cardBps       Int       @default(230)
+  webhookUrl    String?
+  webhookSecret String
+  createdAt     DateTime  @default(now())
+
+  users        User[]
+  kycDocuments KycDocument[]
+  apiKeys      ApiKey[]
+  links        PaymentLink[]
+  payments     Payment[]
+  settlements  Settlement[]
+}
+
+model KycDocument {
+  id         String   @id @default(cuid())
+  merchantId String
+  kind       String // trade_license | nid | bank_proof
+  fileName   String
+  path       String
+  createdAt  DateTime @default(now())
+  merchant   Merchant @relation(fields: [merchantId], references: [id])
+}
+
+model ApiKey {
+  id         String    @id @default(cuid())
+  merchantId String
+  mode       Mode
+  prefix     String
+  hash       String    @unique
+  createdAt  DateTime  @default(now())
+  revokedAt  DateTime?
+  merchant   Merchant  @relation(fields: [merchantId], references: [id])
+}
+
+model PaymentLink {
+  id          String    @id @default(cuid())
+  merchantId  String
+  slug        String    @unique
+  title       String
+  description String?
+  amount      Int? // paisa; null = buyer enters amount
+  active      Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  merchant    Merchant  @relation(fields: [merchantId], references: [id])
+  payments    Payment[]
+}
+
+model Payment {
+  // cuid2 is non-sequential, so payment URLs cannot be enumerated.
+  id             String        @id @default(cuid(2))
+  merchantId     String
+  linkId         String?
+  mode           Mode
+  amount         Int // paisa
+  fee            Int           @default(0)
+  refundedAmount Int           @default(0)
+  currency       String        @default("BDT")
+  provider       String?
+  status         PaymentStatus @default(CREATED)
+  providerRef    String?
+  providerTrxId  String?
+  idempotencyKey String?
+  description    String?
+  customerName   String?
+  customerPhone  String?
+  redirectUrl    String?
+  settlementId   String?
+  paidAt         DateTime?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  merchant   Merchant     @relation(fields: [merchantId], references: [id])
+  link       PaymentLink? @relation(fields: [linkId], references: [id])
+  settlement Settlement?  @relation(fields: [settlementId], references: [id])
+  refunds    Refund[]
+
+  @@unique([merchantId, mode, idempotencyKey])
+  @@unique([provider, providerRef])
+  @@index([merchantId, createdAt])
+}
+
+model Refund {
+  id           String      @id @default(cuid())
+  paymentId    String
+  amount       Int
+  providerRef  String?
+  settlementId String?
+  createdAt    DateTime    @default(now())
+  payment      Payment     @relation(fields: [paymentId], references: [id])
+  settlement   Settlement? @relation(fields: [settlementId], references: [id])
+}
+
+// Inbound provider callbacks and outbound merchant webhooks; doubles as the audit log.
+model WebhookEvent {
+  id        String   @id @default(cuid())
+  direction String // in | out
+  provider  String?
+  eventId   String?
+  paymentId String?
+  url       String?
+  payload   Json
+  status    String // received | delivered | failed
+  attempts  Int      @default(0)
+  lastError String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([provider, eventId])
+  @@index([direction, status])
+}
+
+model LedgerEntry {
+  id        String   @id @default(cuid())
+  txId      String
+  account   String
+  debit     Int      @default(0)
+  credit    Int      @default(0)
+  paymentId String?
+  memo      String?
+  createdAt DateTime @default(now())
+
+  @@index([account])
+  @@index([txId])
+}
+
+model Settlement {
+  id          String           @id @default(cuid())
+  merchantId  String
+  periodEnd   DateTime
+  gross       Int
+  fees        Int
+  refunds     Int
+  net         Int
+  // Snapshot at settlement time so a later account change cannot redirect this payout.
+  payoutMethod  String
+  payoutAccount String
+  status      SettlementStatus @default(PENDING)
+  paidAt      DateTime?
+  createdAt   DateTime         @default(now())
+  merchant    Merchant         @relation(fields: [merchantId], references: [id])
+  payments    Payment[]
+  refundItems Refund[]
+
+  @@unique([merchantId, periodEnd])
+}
